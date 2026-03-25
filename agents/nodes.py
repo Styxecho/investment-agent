@@ -4,12 +4,11 @@
 集成 Qwen 模型和已封装好的 Portfolio 工具。
 """
 from langchain_core.messages import SystemMessage, ToolMessage, AIMessage
-from config.settings import settings
 from agents.state import AgentState
-from typing import Any, List
+from typing import Any
 
 # --- 1. 导入已封装的工具 ---
-from skills.portfolio.tools import calculate_portfolio_pnl
+from archive.tools import calculate_portfolio_pnl
 # 将所有可用工具放入列表
 tools = [calculate_portfolio_pnl]
 

@@ -21,8 +21,8 @@ class AssetType(Enum):
     # 将数据源特定的配置隔离在枚举内部，避免污染业务逻辑
 
     @property
-    def ifind_indicator(self) -> str:
-        """返回 iFinD 接口所需的 jsonIndicator 参数"""
+    def ifind_close_price_indicator(self) -> str:
+        """返回 iFinD 接口所需的 jsonIndicator 参数(仅收盘价)"""
         mapping = {
             self.STOCK: 'ths_close_price_stock',
             self.ETF: 'ths_close_price_fund',
@@ -31,12 +31,32 @@ class AssetType(Enum):
         return mapping.get(self, '')
 
     @property
-    def ifind_price_column(self) -> str:
+    def ifind_pre_close_indicator(self) -> str:
+        """返回 iFinD 接口所需的 jsonIndicator 参数（仅前收盘价）"""
+        mapping = {
+            self.STOCK: 'ths_pre_close_stock',
+            self.ETF: 'ths_pre_close_fund',
+            self.FUND: ''
+        }
+        return mapping.get(self, '')
+
+    @property
+    def ifind_close_price_column(self) -> str:
         """返回 iFinD 原始数据中价格列的列名，用于后续重命名"""
         mapping = {
             self.STOCK: 'close',
             self.ETF: 'close',
             self.FUND: 'adjusted_nav'
+        }
+        return mapping.get(self, '')
+
+    @property
+    def ifind_pre_close_column(self) -> str:
+        """返回 iFinD 原始数据中价格列的列名，用于后续重命名"""
+        mapping = {
+            self.STOCK: 'pre_close',
+            self.ETF: 'pre_close',
+            self.FUND: ''
         }
         return mapping.get(self, '')
 

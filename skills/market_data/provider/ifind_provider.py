@@ -4,8 +4,9 @@ import iFinDPy as ifd
 import pandas as pd
 from datetime import datetime
 from typing import Optional, List, Union
+import time
 from config.settings import settings
-from config.enums import AssetType  # 【关键】导入全局枚举
+from config.enums import AssetType
 from utils.logger import logger
 
 
@@ -13,27 +14,21 @@ class iFinDProvider:
     """
     iFinD 数据提供者 (单例模式)
 
-    特性：
-    1. 单例：整个应用只登录一次。
-    2. 懒加载：第一次调用数据接口时自动检查并登录。
-    3. 自动清理：配合 atexit 或手动调用 disconnect 安全登出。
+    更新特性：
+    1. 支持获取多字段 (Close + Pre_Close)。
+    2. 内置指数退避重试机制 (Retry with Exponential Backoff)。
+    3. 保持原有的单例、懒加载特性。
     """
 
     _instance: Optional['iFinDProvider'] = None
     _is_logged_in: bool = False
 
     def __new__(cls, *args, **kwargs):
-        """单例模式核心：确保只创建一个实例"""
         if cls._instance is None:
             cls._instance = super(iFinDProvider, cls).__new__(cls)
         return cls._instance
 
     def __init__(self):
-        """
-        初始化配置信息。
-        注意：__init__ 在单例模式下可能会被多次调用（如果多处 new），
-        所以需要用标志位防止重复初始化配置。
-        """
         if hasattr(self, '_initialized') and self._initialized:
             return
 
@@ -46,9 +41,6 @@ class iFinDProvider:
         self._initialized = True
 
     def connect(self) -> bool:
-        """
-        显式登录。如果已登录则直接返回。
-        """
         if self._is_logged_in:
             return True
 
@@ -57,7 +49,6 @@ class iFinDProvider:
 
         try:
             logger.info("🔑 正在连接 iFinD 数据终端...")
-            # 调用 iFinD 官方登录接口
             login_res = ifd.THS_iFinDLogin(self.username, self.pin)
 
             if login_res == 0:
@@ -67,17 +58,14 @@ class iFinDProvider:
             elif login_res == 2:
                 logger.error("❌ iFinD 登录失败，用户名或密码错误。")
             else:
-                logger.error("❌ iFinD 登录失败，请检查账号密码或终端是否开启。")
-                return False
+                logger.error("❌ iFinD 登录失败，未知原因。")
+            return False
         except Exception as e:
             logger.error(f"❌ iFinD 连接异常：{e}")
             self._is_logged_in = False
             return False
 
     def disconnect(self):
-        """
-        显式登出。建议在程序退出前调用。
-        """
         if self._is_logged_in:
             try:
                 logger.info("👋 正在断开 iFinD 连接...")
@@ -86,11 +74,8 @@ class iFinDProvider:
                 logger.info("✅ iFinD 已安全断开。")
             except Exception as e:
                 logger.error(f"⚠️ 登出时发生错误：{e}")
-        else:
-            logger.debug("ℹ️ iFinD 当前未连接，跳过登出操作。")
 
     def _ensure_connected(self):
-        """内部辅助：确保在执行数据请求前已连接"""
         if not self._is_logged_in:
             if not self.connect():
                 raise ConnectionError("无法连接到 iFinD。请检查网络、账号配置或同花顺终端状态。")
@@ -100,16 +85,18 @@ class iFinDProvider:
             symbol: Union[str, List[str]],
             start_date: str,
             end_date: str,
-            asset_type: AssetType = AssetType.STOCK
+            asset_type: AssetType = AssetType.STOCK,
+            retry_times: int = 3
     ) -> pd.DataFrame:
         """
-        获取历史行情数据
+        获取历史行情数据 (包含收盘价和前收盘价)
 
         :param symbol: 股票代码 (如 '000001.SZ')，支持列表
         :param start_date: 开始日期 (YYYYMMDD)
         :param end_date: 结束日期 (YYYYMMDD)
-        :param asset_type: 资产类型 (使用全局枚举 AssetType)
-        :return: 标准化后的 Pandas DataFrame
+        :param asset_type: 资产类型
+        :param retry_times: 失败重试次数
+        :return: 标准化后的 Pandas DataFrame (包含 'close', 'pre_close' 列)
         """
         # 1. 确保连接
         self._ensure_connected()
@@ -121,7 +108,7 @@ class iFinDProvider:
         else:
             ths_code = str(symbol)
 
-        # 日期格式转换 (YYYYMMDD -> YYYY-MM-DD)
+        # 日期格式转换
         try:
             start_dt = datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y%m%d").strftime("%Y-%m-%d")
@@ -129,62 +116,108 @@ class iFinDProvider:
             logger.error(f"日期格式错误，必须为 YYYYMMDD: {e}")
             raise e
 
-        logger.info(f"[iFinD] 获取 {asset_type.value} 数据：{ths_code} ({start_dt} ~ {end_dt})")
+        logger.info(f"[iFinD] 准备获取数据：{ths_code} ({start_dt} ~ {end_dt})")
 
-        try:
-            # 2. 从枚举中获取 iFinD 特定参数 (消除硬编码)
-            indicator = asset_type.ifind_indicator
-            global_param = asset_type.ifind_global_param
+        # 2. 构造请求指标 (关键修改：确保包含 pre_close)
+        close_indicator = asset_type.ifind_close_price_indicator
+        pre_close_indicator = asset_type.ifind_pre_close_indicator
 
-            if not indicator:
-                raise ValueError(f"不支持的资产类型配置：{asset_type}")
+        if pre_close_indicator:
+            request_indicator = f"{close_indicator},{pre_close_indicator}"
+        else:
+            request_indicator = close_indicator
 
-            # 3. 调用 iFinD 接口
-            df = ifd.THS_DS(
-                thscode=ths_code,
-                jsonIndicator=indicator,
-                jsonparam='100',  # 假设固定参数，如有需要也可放入枚举
-                globalparam=global_param,
-                begintime=start_dt,
-                endtime=end_dt
-            ).data
+        logger.info(f"[iFinD] 请求指标：{request_indicator}")
+        global_param = asset_type.ifind_global_param or '100'
 
-            if df is None or df.empty:
-                logger.warning(f"[iFinD] 未返回数据：{ths_code}")
-                return pd.DataFrame()
+        # 3. 执行带重试的请求
+        df = None
+        last_error = None
 
-            # 4. 数据标准化与清洗
-            target_price_col = asset_type.ifind_price_column
+        for attempt in range(retry_times):
+            try:
+                logger.debug(f"[iFinD] 尝试请求 (第 {attempt + 1}/{retry_times} 次)...")
 
-            # 定义映射关系 (只映射存在的列，防止报错)
-            raw_cols = df.columns.tolist()
-            column_mapping = {}
+                res = ifd.THS_DS(
+                    thscode=ths_code,
+                    jsonIndicator=request_indicator,
+                    jsonparam='100',
+                    globalparam=global_param,
+                    begintime=start_dt,
+                    endtime=end_dt
+                )
 
-            if 'time' in raw_cols:
-                column_mapping['time'] = 'date'
-            if 'thscode' in raw_cols:
-                column_mapping['thscode'] = 'scrt_code'
-            if indicator in raw_cols:
-                column_mapping[indicator] = target_price_col
+                if res and hasattr(res, 'data'):
+                    df = res.data
+                    if df is not None and not df.empty:
+                        logger.info(f"[iFinD] 第 {attempt + 1} 次请求成功，获取 {len(df)} 条记录。")
+                        break  # 成功则跳出重试循环
+                    else:
+                        logger.warning(f"[iFinD] 返回数据为空。")
+                        break  # 空数据通常不需要重试
 
-            if column_mapping:
-                df = df.rename(columns=column_mapping)
+                # 如果 res 为 None 或没有 data 属性，视为本次请求无效，进入重试
+                last_error = Exception("API 返回结果为空或格式异常")
 
-            # 统一日期列格式
-            if 'date' in df.columns:
-                df["date"] = pd.to_datetime(df["date"])
-                # 额外生成系统标准的 trade_date (YYYYMMDD 字符串)
-                df['trade_date'] = df['date'].dt.strftime('%Y%m%d')
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[iFinD] 第 {attempt + 1} 次请求失败：{e}")
+                if attempt < retry_times - 1:
+                    wait_time = 2 ** attempt  # 指数退避：1s, 2s, 4s
+                    logger.info(f"[iFinD] 等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"[iFinD] 达到最大重试次数 {retry_times}，最终失败。")
+                    raise e  # 抛出最后一次错误
 
-            logger.info(f"[iFinD] 成功获取 {len(df)} 条记录。")
-            return df
+        if df is None or df.empty:
+            if last_error:
+                raise last_error
+            return pd.DataFrame()
 
-        except Exception as e:
-            logger.error(f"[iFinD] 数据获取失败：{e}")
-            # 遇到严重网络错误时，可以选择标记为未登录，以便下次重试时重新登录
-            # self._is_logged_in = False
-            raise e
+        # 4. 数据标准化与清洗 (关键修改：映射 pre_close)
+        raw_cols = df.columns.tolist()
+        column_mapping = {}
+
+        # 映射时间
+        if 'time' in raw_cols:
+            column_mapping['time'] = 'date'
+        # 映射代码
+        if 'thscode' in raw_cols:
+            column_mapping['thscode'] = 'scrt_code'
+
+        # 映射收盘价
+        if close_indicator in raw_cols:
+            column_mapping[close_indicator] = asset_type.ifind_close_price_column
+        else:
+            logger.warning(f"[iFinD] 未找到预期的收盘价列：{close_indicator}. 当前列：{raw_cols}")
+        # 映射昨收价 (利用枚举定义的原始列名)
+        # 只有当请求了昨收指标，且返回中存在该列时才映射
+        if pre_close_indicator:
+            if pre_close_indicator in raw_cols:
+                column_mapping[pre_close_indicator] = asset_type.ifind_pre_close_column
+            else:
+                logger.warning(f"[iFinD] 请求了昨收但未找到列：{pre_close_indicator}. 当前列：{raw_cols}")
+
+        if column_mapping:
+            df = df.rename(columns=column_mapping)
+
+        # 统一日期列格式
+        if 'date' in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df['trade_date'] = df['date'].dt.strftime('%Y%m%d')
+
+        # 确保需要的列存在 (可选检查)
+        required_cols = ['scrt_code', 'trade_date', 'close']
+        if pre_close_indicator:
+            required_cols.append('pre_close')
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            logger.error(f"[iFinD] 标准化后缺失关键列：{missing}")
+            # 视情况决定是否抛错
+
+        return df
 
 
-# 导出一个全局单例实例，方便其他模块直接 import 使用
+# 导出全局单例
 ifind_provider = iFinDProvider()

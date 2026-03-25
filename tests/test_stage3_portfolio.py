@@ -7,7 +7,7 @@ import pandas as pd
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from skills.portfolio.loader import HoldingsLoader
+from archive.loader import HoldingsLoader
 from skills.portfolio.calculator import PortfolioService
 
 

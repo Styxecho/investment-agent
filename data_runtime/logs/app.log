@@ -326,3 +326,76 @@ TypeError: tabulate() got an unexpected keyword argument 'float_format'
 2026-03-19 00:19:51 | INFO     | investment_agent | 🛑 检测到程序退出，正在清理 iFinD 资源...
 2026-03-19 00:19:51 | INFO     | investment_agent | 👋 正在断开 iFinD 连接...
 2026-03-19 00:19:51 | INFO     | investment_agent | ✅ iFinD 已安全断开。
+2026-03-20 12:58:33 | INFO     | investment_agent | [Service] 正在查询缓存：600519.SH @ 20231001
+2026-03-20 12:58:33 | INFO     | investment_agent | [Service] 🌐 缓存未命中，请求 iFinD: 600519.SH @ 20231001
+2026-03-20 12:58:33 | INFO     | investment_agent | [Service] 💾 正在保存新数据到本地...
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 正在查询缓存：600519.SH @ 20231001
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 🌐 缓存未命中，请求 iFinD: 600519.SH @ 20231001
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 💾 正在保存新数据到本地...
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 正在查询缓存：600519.SH @ 20231002
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] ✅ 缓存命中 (Source: DB)
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 正在查询缓存：600519.SH @ 20231003
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 🌐 缓存未命中，请求 iFinD: 600519.SH @ 20231003
+2026-03-20 13:01:58 | ERROR    | investment_agent | [Service] ❌ 获取数据失败：无法连接 iFinD 终端
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 正在查询缓存：600519.SH @ 20231004
+2026-03-20 13:01:58 | INFO     | investment_agent | [Service] 🌐 缓存未命中，请求 iFinD: 600519.SH @ 20231004
+2026-03-20 13:01:58 | WARNING  | investment_agent | [Service] iFinD 返回空数据 (20231004)
+2026-03-24 12:52:56 | DEBUG    | investment_agent | 发现 1 条记录 close_price 缺失，已使用 pre_close_price 填充 (视为当日无涨跌)。
+2026-03-24 12:52:56 | DEBUG    | investment_agent | 发现 1 条记录 pre_close_price 缺失，已使用 close_price 填充 (视为新股或数据补全)。
+2026-03-24 12:52:56 | ERROR    | investment_agent | 关键数据缺失：发现 1 条记录的 close_price 和 pre_close_price 均为空。样本数据:
+  trade_date asset_code asset_name
+0   20260320  BAD.STOCK       None涉及日期总数: 1, 涉及代码总数: 1
+2026-03-24 13:07:48 | ERROR    | investment_agent | [PortfolioSkill] 执行发生未预期错误: 'dict' object has no attribute 'extra_params'
+Traceback (most recent call last):
+  File "D:\Study\Program\investment_agent\skills\portfolio\skill.py", line 103, in execute
+    if context.extra_params and "holdings" in context.extra_params:
+       ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'dict' object has no attribute 'extra_params'
+2026-03-25 09:24:46 | DEBUG    | investment_agent | 发现 1 条记录 close_price 缺失，已使用 pre_close_price 填充 (视为当日无涨跌)。
+2026-03-25 09:24:46 | DEBUG    | investment_agent | 发现 1 条记录 pre_close_price 缺失，已使用 close_price 填充 (视为新股或数据补全)。
+2026-03-25 09:24:46 | ERROR    | investment_agent | 关键数据缺失：发现 1 条记录的 close_price 和 pre_close_price 均为空。样本数据:
+  trade_date asset_code asset_name
+0   20260320  BAD.STOCK       None涉及日期总数: 1, 涉及代码总数: 1
+2026-03-25 12:33:46 | INFO     | investment_agent | [PortfolioSkill] 请求 2 个资产的行情: ['A.SH', 'B.SZ']
+2026-03-25 12:33:46 | ERROR    | investment_agent | [PortfolioSkill] 执行发生未预期错误: 'SkillResult' object has no attribute 'message'
+Traceback (most recent call last):
+  File "D:\Study\Program\investment_agent\skills\portfolio\skill.py", line 162, in execute
+    logger.warning(f"行情获取部分失败: {market_result.message}")
+                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Study\Program\investment_agent\.venv\Lib\site-packages\pydantic\main.py", line 1026, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'SkillResult' object has no attribute 'message'
+2026-03-25 12:33:47 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['A.SH']
+2026-03-25 12:33:47 | ERROR    | investment_agent | [PortfolioSkill] 执行发生未预期错误: 'SkillResult' object has no attribute 'message'
+Traceback (most recent call last):
+  File "D:\Study\Program\investment_agent\skills\portfolio\skill.py", line 162, in execute
+    logger.warning(f"行情获取部分失败: {market_result.message}")
+                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Study\Program\investment_agent\.venv\Lib\site-packages\pydantic\main.py", line 1026, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'SkillResult' object has no attribute 'message'
+2026-03-25 12:33:47 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['BAD.STOCK']
+2026-03-25 12:33:47 | ERROR    | investment_agent | [PortfolioSkill] 执行发生未预期错误: 'SkillResult' object has no attribute 'message'
+Traceback (most recent call last):
+  File "D:\Study\Program\investment_agent\skills\portfolio\skill.py", line 162, in execute
+    logger.warning(f"行情获取部分失败: {market_result.message}")
+                                        ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Study\Program\investment_agent\.venv\Lib\site-packages\pydantic\main.py", line 1026, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'SkillResult' object has no attribute 'message'
+2026-03-25 12:42:32 | INFO     | investment_agent | [PortfolioSkill] 请求 2 个资产的行情: ['A.SH', 'B.SZ']
+2026-03-25 12:42:32 | WARNING  | investment_agent | 行情获取部分失败: 缺少必要参数：symbol (股票代码)。请用户提供要查询的股票代码。
+2026-03-25 12:42:33 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['A.SH']
+2026-03-25 12:42:33 | WARNING  | investment_agent | 行情获取部分失败: 缺少必要参数：symbol (股票代码)。请用户提供要查询的股票代码。
+2026-03-25 12:42:33 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['BAD.STOCK']
+2026-03-25 12:42:33 | WARNING  | investment_agent | 行情获取部分失败: 缺少必要参数：symbol (股票代码)。请用户提供要查询的股票代码。
+2026-03-25 12:46:22 | INFO     | investment_agent | [PortfolioSkill] 请求 2 个资产的行情: ['B.SZ', 'A.SH']
+2026-03-25 12:46:22 | INFO     | investment_agent | [PortfolioSkill] 开始执行组合计算引擎...
+2026-03-25 12:46:22 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['A.SH']
+2026-03-25 12:46:22 | WARNING  | investment_agent | 行情获取部分失败: API 连接超时
+2026-03-25 12:46:22 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['BAD.STOCK']
+2026-03-25 12:46:22 | WARNING  | investment_agent | 解析行情数据失败: {'asset_code': 'BAD.STOCK', 'trade_date': '20260320', 'asset_type': 'STOCK', 'close_price': None, 'pre_close_price': None}, 错误: float() argument must be a string or a real number, not 'NoneType'
+2026-03-25 12:52:42 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['BAD.STOCK']
+2026-03-25 12:52:42 | WARNING  | investment_agent | 解析行情数据失败: {'asset_code': 'BAD.STOCK', 'trade_date': '20260320', 'asset_type': 'STOCK', 'close_price': None, 'pre_close_price': None}, 错误: float() argument must be a string or a real number, not 'NoneType'
+2026-03-25 12:54:26 | INFO     | investment_agent | [PortfolioSkill] 请求 1 个资产的行情: ['BAD.STOCK']
+2026-03-25 12:54:26 | INFO     | investment_agent | [PortfolioSkill] 开始执行组合计算引擎...

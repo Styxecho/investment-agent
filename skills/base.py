@@ -40,7 +40,7 @@ class SkillContext(BaseModel):
     传递给技能 execute 方法的上下文对象。
     显式包含 target_date，避免技能内部依赖系统时间。
     """
-    target_date: str = Field(..., description="目标日期 (YYYY-MM-DD)")
+    target_date: str = Field(..., description="目标日期 (YYYYMMDD)")
     # 以下字段为可选，根据具体技能需求由上游填充
     holdings: Optional[Dict[str, Any]] = Field(None, description="持仓数据字典")
     market_data: Optional[Dict[str, Any]] = Field(None, description="前置步骤获取的行情数据")

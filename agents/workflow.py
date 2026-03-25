@@ -2,7 +2,7 @@
 """
 构建 LangGraph 工作流 (适配最新版 LangGraph API)。
 """
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_ollama import ChatOllama
 from functools import partial
@@ -12,7 +12,7 @@ from agents.nodes import chat_node, tool_node
 from config.settings import settings
 
 # --- 0. 导入工具 ---
-from skills.portfolio.tools import calculate_portfolio_pnl
+from archive.tools import calculate_portfolio_pnl
 
 ALL_TOOLS = [calculate_portfolio_pnl]
 
