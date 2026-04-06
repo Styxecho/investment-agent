@@ -1,6 +1,13 @@
 # skills/market_data/providers/ifind_provider.py
 
-import iFinDPy as ifd
+# 延迟导入 iFinDPy，避免模块加载时报错
+try:
+    import iFinDPy as ifd
+    IFIND_AVAILABLE = True
+except ImportError:
+    IFIND_AVAILABLE = False
+    ifd = None
+
 import pandas as pd
 from datetime import datetime
 from typing import Optional, List, Union
@@ -43,6 +50,10 @@ class iFinDProvider:
     def connect(self) -> bool:
         if self._is_logged_in:
             return True
+
+        if not IFIND_AVAILABLE:
+            logger.error("❌ iFinDPy 模块未安装，无法使用 iFinD 数据源")
+            return False
 
         if not self.username or not self.pin:
             raise ValueError("iFinD 登录失败：缺少用户名或 PIN 码配置。")
@@ -217,6 +228,207 @@ class iFinDProvider:
             # 视情况决定是否抛错
 
         return df
+    
+    def fetch_fund_nav(
+        self,
+        fund_code: str,
+        start_date: str,
+        end_date: str,
+        retry_times: int = 3
+    ) -> pd.DataFrame:
+        """
+        获取公募基金净值序列
+        
+        :param fund_code: 基金代码（如 '003956.OF'）
+        :param start_date: 开始日期（YYYYMMDD）
+        :param end_date: 结束日期（YYYYMMDD）
+        :param retry_times: 重试次数
+        :return: DataFrame 包含 unit_nav, accumulated_nav, adjusted_nav 列
+        
+        API 调用示例：
+        THS_DS('003956.OF','ths_unit_nv_fund;ths_accum_unit_nv_fund;ths_adjustment_nv_fund','','block:latest','2026-04-03','2026-04-05')
+        """
+        # 1. 确保连接
+        self._ensure_connected()
+        
+        # 2. 日期格式转换
+        try:
+            start_dt = datetime.strptime(start_date, "%Y%m%d").strftime("%Y-%m-%d")
+            end_dt = datetime.strptime(end_date, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError as e:
+            logger.error(f"日期格式错误，必须为 YYYYMMDD: {e}")
+            raise e
+        
+        logger.info(f"[iFinD] 准备获取基金净值：{fund_code} ({start_dt} ~ {end_dt})")
+        
+        # 3. 构造请求指标（基金需要三个净值）
+        request_indicator = AssetType.FUND.ifind_fund_nav_indicators
+        global_param = AssetType.FUND.ifind_global_param
+        
+        # 【关键修复】根据 jsonIndicator 中的分号数量生成 jsonparam
+        # 如果有 3 个指标（2 个分号），则 jsonparam=';;'
+        indicator_count = request_indicator.count(';') + 1
+        jsonparam = ';' * (indicator_count - 1)
+        
+        logger.info(f"[iFinD] 请求指标：{request_indicator} ({indicator_count}个指标)")
+        logger.info(f"[iFinD] 参数：jsonparam='{jsonparam}'")
+        
+        # 4. 执行带重试的请求
+        df = None
+        last_error = None
+        
+        for attempt in range(retry_times):
+            try:
+                logger.debug(f"[iFinD] 尝试请求 (第 {attempt + 1}/{retry_times} 次)...")
+                
+                res = ifd.THS_DS(
+                    thscode=fund_code,
+                    jsonIndicator=request_indicator,
+                    jsonparam=jsonparam,
+                    globalparam=global_param,
+                    begintime=start_dt,
+                    endtime=end_dt
+                )
+                
+                if res and hasattr(res, 'data'):
+                    df = res.data
+                    if df is not None and not df.empty:
+                        logger.info(f"[iFinD] 第 {attempt + 1} 次请求成功，获取 {len(df)} 条记录。")
+                        break
+                    else:
+                        logger.warning(f"[iFinD] 返回数据为空。")
+                        break
+                
+                last_error = Exception("API 返回结果为空或格式异常")
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[iFinD] 第 {attempt + 1} 次请求失败：{e}")
+                if attempt < retry_times - 1:
+                    wait_time = 2 ** attempt
+                    logger.info(f"[iFinD] 等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"[iFinD] 达到最大重试次数 {retry_times}，最终失败。")
+                    raise e
+        
+        if df is None or df.empty:
+            if last_error:
+                raise last_error
+            return pd.DataFrame()
+        
+        # 5. 数据标准化与清洗
+        raw_cols = df.columns.tolist()
+        column_mapping = {}
+        
+        # 映射时间
+        if 'time' in raw_cols:
+            column_mapping['time'] = 'trade_date'
+        
+        # 映射代码
+        if 'thscode' in raw_cols:
+            column_mapping['thscode'] = 'fund_code'
+        
+        # 映射三种净值
+        if 'ths_unit_nv_fund' in raw_cols:
+            column_mapping['ths_unit_nv_fund'] = 'unit_nav'
+        if 'ths_accum_unit_nv_fund' in raw_cols:
+            column_mapping['ths_accum_unit_nv_fund'] = 'accumulated_nav'
+        if 'ths_adjustment_nv_fund' in raw_cols:
+            column_mapping['ths_adjustment_nv_fund'] = 'adjusted_nav'
+        
+        if column_mapping:
+            df = df.rename(columns=column_mapping)
+        
+        # 统一日期列格式
+        if 'trade_date' in df.columns:
+            df["trade_date"] = pd.to_datetime(df["trade_date"])
+        
+        return df
+    
+    def fetch_fund_nav_with_prev(
+        self,
+        fund_code: str,
+        target_date: str,
+        trade_calendar_service
+    ) -> pd.DataFrame:
+        """
+        获取基金 T 日和 T-1 日净值，并转换为 close/pre_close 格式
+        
+        :param fund_code: 基金代码
+        :param target_date: 目标日期（YYYYMMDD）
+        :param trade_calendar_service: 交易日历服务实例
+        :return: DataFrame 包含 close (T 日净值) 和 pre_close (T-1 日净值)
+        
+        核心逻辑：
+        1. 查询交易日历，找到 T-1 交易日
+        2. 调用 fetch_fund_nav 查询 [T-1, T] 范围
+        3. 将返回的 2 条记录转换为 1 行（close + pre_close）
+        """
+        # 1. 获取 T-1 交易日
+        prev_trading_date = trade_calendar_service.get_previous_trading_date(target_date, days_back=1)
+        
+        if not prev_trading_date:
+            logger.warning(f"无法找到 {target_date} 的前一个交易日，使用默认逻辑")
+            # 降级策略：简单减 3 天
+            from datetime import timedelta
+            target_dt = datetime.strptime(target_date, "%Y%m%d")
+            prev_dt = target_dt - timedelta(days=3)
+            prev_trading_date = prev_dt.strftime("%Y%m%d")
+        
+        logger.info(f"[iFinD] 基金查询日期范围：[{prev_trading_date}, {target_date}]")
+        
+        # 2. 查询净值序列
+        df = self.fetch_fund_nav(fund_code, prev_trading_date, target_date)
+        
+        if df is None or df.empty:
+            return pd.DataFrame()
+        
+        # 3. 转换为 close/pre_close 格式
+        df_converted = self._convert_fund_nav_to_price(df, target_date)
+        
+        return df_converted
+    
+    def _convert_fund_nav_to_price(self, df: pd.DataFrame, target_date: str) -> pd.DataFrame:
+        """
+        将基金净值序列转换为 close/pre_close 格式
+        
+        输入：
+        | trade_date | fund_code | unit_nav | accumulated_nav | adjusted_nav |
+        | 2026-04-03 | 003956.OF | 1.2345   | 1.3000          | 1.2800       |
+        | 2026-04-04 | 003956.OF | 1.2500   | 1.3100          | 1.2900       |
+        
+        输出：
+        | trade_date | fund_code | close  | pre_close | unit_nav | accumulated_nav | adjusted_nav |
+        | 20260404   | 003956.OF | 1.2500 | 1.2345    | 1.2500   | 1.3100          | 1.2900       |
+        """
+        # 1. 按日期排序
+        df = df.sort_values('trade_date')
+        
+        # 2. 筛选目标日期
+        df_target = df[df['trade_date'].dt.strftime('%Y%m%d') == target_date]
+        df_prev = df[df['trade_date'].dt.strftime('%Y%m%d') < target_date]
+        
+        if df_target.empty:
+            logger.warning(f"目标日期 {target_date} 无数据")
+            return pd.DataFrame()
+        
+        # 3. 构建结果（只保留 T 日数据，但包含 T-1 日的 pre_close）
+        t_day_nav = df_target.iloc[0]['unit_nav']
+        t_minus_1_nav = df_prev.iloc[-1]['unit_nav'] if not df_prev.empty else t_day_nav
+        
+        result = pd.DataFrame([{
+            'trade_date': target_date,
+            'fund_code': df_target.iloc[0]['fund_code'],
+            'close': t_day_nav,
+            'pre_close': t_minus_1_nav,
+            'unit_nav': t_day_nav,
+            'accumulated_nav': df_target.iloc[0]['accumulated_nav'],
+            'adjusted_nav': df_target.iloc[0]['adjusted_nav'],
+            'prev_unit_nav': t_minus_1_nav
+        }])
+        
+        return result
 
 
 # 导出全局单例

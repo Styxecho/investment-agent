@@ -1,20 +1,18 @@
 # agents/workflow.py
 """
-构建 LangGraph 工作流 (适配最新版 LangGraph API)。
+构建 LangGraph 工作流 (集成 Qwen 云端大模型 via DashScope)
 """
 from langgraph.graph import StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_ollama import ChatOllama
 from functools import partial
 
 from agents.state import AgentState
 from agents.nodes import chat_node, tool_node
+from agents.qwen_adapter import QwenChatModel
 from config.settings import settings
 
 # --- 0. 导入工具 ---
-from archive.tools import calculate_portfolio_pnl
-
-ALL_TOOLS = [calculate_portfolio_pnl]
+from agents.tools import ALL_TOOLS
 
 
 def build_agent_graph():
@@ -22,10 +20,16 @@ def build_agent_graph():
     创建并编译 Agent 图。
     """
     # --- 1. 初始化 LLM ---
-    print(f"🚀 正在加载模型: {settings.OLLAMA_MODEL}")
-    llm = ChatOllama(
-        model=settings.OLLAMA_MODEL,
-        base_url=settings.OLLAMA_BASE_URL,
+    print(f"[LOAD] Loading model: {settings.QWEN_MODEL}")
+    
+    # 检查 API Key 配置
+    if not settings.QWEN_API_KEY or settings.QWEN_API_KEY == 'YOUR_API_KEY_HERE':
+        raise ValueError("QWEN_API_KEY 未配置，请检查 .env 文件")
+    
+    # 创建 Qwen 适配器实例
+    llm = QwenChatModel(
+        model_name=settings.QWEN_MODEL,
+        api_key=settings.QWEN_API_KEY,
         temperature=0,
     )
 
@@ -74,7 +78,7 @@ def build_agent_graph():
     memory = MemorySaver()
     app = workflow.compile(checkpointer=memory)
 
-    print("✅ Agent 工作流构建完成！")
+    print("[OK] Agent workflow build completed!")
     return app
 
 

@@ -24,12 +24,18 @@ class AkShareProvider:
 
             # 标准化列名
             column_mapping = {
-                "日期": "date", "开盘": "open", "收盘": "close",
-                "最高": "high", "最低": "low", "成交量": "volume",
-                "成交额": "amount", "涨跌幅": "pct_change"
+                "日期": "trade_date", "开盘": "open", "收盘": "close",
+                "最高": "high", "最低": "low", "成交量": "vol",
+                "成交额": "amount", "涨跌幅": "pct_change",
+                "昨收": "pre_close"
             }
             df = df.rename(columns=column_mapping)
-            df["date"] = pd.to_datetime(df["date"])
+            df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.strftime("%Y%m%d")
+            
+            # 确保 pre_close 列存在
+            if "pre_close" not in df.columns:
+                # 如果 AkShare 没有返回 pre_close，用 close 近似（首日情况）
+                df["pre_close"] = df["close"].shift(1)
 
             logger.info(f"[AkShare] 成功获取 {len(df)} 条记录。")
             return df

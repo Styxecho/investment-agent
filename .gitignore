@@ -21,5 +21,10 @@ data_external/
 __pycache__/
 *.pyc
 
+# Node.js 依赖
+node_modules/
+package.json
+package-lock.json
+
 # 忽略项目内容记录文件
 PROJECT CONTEXT AND ROADMAP.md

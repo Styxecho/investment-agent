@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from datetime import date
 
 # 1. 导入基类与标准契约 (严格匹配 base.py)
@@ -322,7 +322,7 @@ class PortfolioSkill(BaseSkill):
 
         return positions
 
-    def _parse_market_data(self, data: Dict | List) -> List[MarketData]:
+    def _parse_market_data(self, data: Union[Dict, List]) -> List[MarketData]:
         """从 MarketDataSkill 的返回结果中提取 List[MarketData]。"""
         items = []
         if isinstance(data, list):
