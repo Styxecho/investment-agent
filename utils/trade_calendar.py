@@ -14,7 +14,7 @@
 import csv
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional, List, Set
+from typing import Optional, List, Set, Tuple
 from utils.logger import logger
 
 
@@ -58,7 +58,7 @@ class TradeCalendarService:
         return specific_file
     
     def _load_holidays(self):
-        """加载节假日 CSV 文件"""
+        """加载节假日 CSV 文件（加载所有年份数据）"""
         csv_path = self._get_calendar_file_path(self.calendar_year)
         
         if not csv_path.exists():
@@ -88,7 +88,7 @@ class TradeCalendarService:
                 if is_holiday == '1':
                     self._holidays.add(date)
             
-            logger.info(f"交易日历已加载：{len(self._holidays)} 个节假日 ({self.calendar_year}年)")
+            logger.info(f"交易日历已加载：{len(self._holidays)} 个节假日 (全量数据)")
             
         except Exception as e:
             logger.error(f"加载交易日历失败：{e}")
@@ -209,6 +209,127 @@ class TradeCalendarService:
             
         except Exception as e:
             logger.error(f"获取交易日范围失败：{e}")
+            return []
+    
+    def get_last_trading_date_of_month(self, year: int, month: int) -> Optional[str]:
+        """
+        获取指定年月的最后一个交易日
+        
+        规则：从自然月最后一天往前推，找到最近一个交易日
+        
+        :param year: 年份
+        :param month: 月份
+        :return: 最后一个交易日（YYYYMMDD），找不到则返回 None
+        
+        示例：
+        - get_last_trading_date_of_month(2016, 10) → '20161031'（10月31日是周一，交易日）
+        - get_last_trading_date_of_month(2026, 10) → '20261030'（10月31日是周六，往前推）
+        """
+        try:
+            import calendar
+            # 获取该月最后一天
+            last_day = calendar.monthrange(year, month)[1]
+            current = datetime(year, month, last_day)
+            
+            # 往前遍历，找到第一个交易日
+            max_search_days = 10  # 最多往前推10天（应对长假）
+            days_searched = 0
+            
+            while days_searched < max_search_days:
+                date_str = current.strftime("%Y%m%d")
+                if self.is_trading_day(date_str):
+                    return date_str
+                current -= timedelta(days=1)
+                days_searched += 1
+            
+            logger.warning(f"未找到 {year}-{month:02d} 的交易日（往前推了{max_search_days}天）")
+            return None
+            
+        except Exception as e:
+            logger.error(f"获取 {year}-{month:02d} 月尾日期失败：{e}")
+            return None
+    
+    def get_month_end_dates(
+        self, 
+        start_date: str, 
+        end_date: str
+    ) -> List[Tuple[str, str]]:
+        """
+        获取指定范围内的月度日期对（上月尾, 本月尾）
+        
+        :param start_date: 开始日期（YYYYMMDD），结果包含该月
+        :param end_date: 结束日期（YYYYMMDD），结果包含该月
+        :return: [(上月尾, 本月尾), ...] 列表，按时间顺序排列
+        
+        示例：
+        start='20160101', end='20160331'
+        → [('20151231', '20160129'), ('20160129', '20160229'), ('20160229', '20160331')]
+        
+        注意：
+        - 第一个元组的"上月尾"可能是 start_date 前一个月的月尾
+        - 如果某月找不到交易日，则跳过该月
+        """
+        try:
+            start = self._parse_date(start_date)
+            end = self._parse_date(end_date)
+            
+            # 从 start_date 所在月开始
+            current_year = start.year
+            current_month = start.month
+            
+            # 找到 start_date 所在月的月尾
+            first_month_end = self.get_last_trading_date_of_month(current_year, current_month)
+            if not first_month_end:
+                logger.warning(f"未找到 {current_year}-{current_month:02d} 的月尾日期")
+                return []
+            
+            month_ends = [first_month_end]
+            
+            # 逐月推进，直到超过 end_date
+            max_months = 500  # 安全限制，最多500个月
+            months_count = 0
+            
+            while True:
+                # 移到下个月
+                if current_month == 12:
+                    current_year += 1
+                    current_month = 1
+                else:
+                    current_month += 1
+                
+                month_end = self.get_last_trading_date_of_month(current_year, current_month)
+                
+                if not month_end:
+                    # 该月没有交易日，继续下一个月
+                    months_count += 1
+                    if months_count > max_months:
+                        logger.warning(f"搜索超过 {max_months} 个月，停止")
+                        break
+                    continue
+                
+                # 检查是否超过 end_date
+                month_end_dt = self._parse_date(month_end)
+                if month_end_dt > end:
+                    break
+                
+                month_ends.append(month_end)
+                months_count += 1
+                
+                if months_count > max_months:
+                    logger.warning(f"搜索超过 {max_months} 个月，停止")
+                    break
+            
+            # 构建 (上月尾, 本月尾) 对
+            date_pairs = []
+            for i in range(1, len(month_ends)):
+                date_pairs.append((month_ends[i-1], month_ends[i]))
+            
+            return date_pairs
+            
+        except Exception as e:
+            logger.error(f"获取月度日期对失败：{e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _parse_date(self, date_str: str) -> datetime:

@@ -331,12 +331,20 @@ class PortfolioSkill(BaseSkill):
             # 兼容多种返回结构
             items = data.get("items") or data.get("data") or data.get("result") or []
 
-        # 如果 data 本身就是 SkillResult.data 且结构嵌套，可能需要更深一层，视 MarketDataSkill 而定
-        # 假设 MarketDataSkill 返回的 data 字段直接就是列表或包含列表的字典
-
         market_data_list = []
         for item in items:
             try:
+                # 兼容不同数据源返回的代码字段名
+                asset_code = (
+                    item.get("asset_code")
+                    or item.get("scrt_code")
+                    or item.get("fund_code")
+                    or item.get("symbol")
+                )
+                if not asset_code:
+                    logger.warning(f"行情数据缺少资产代码字段：{item}")
+                    continue
+
                 # 处理可能的枚举字符串
                 atype_raw = item.get("asset_type", "STOCK")
                 if isinstance(atype_raw, str):
@@ -344,15 +352,26 @@ class PortfolioSkill(BaseSkill):
                 else:
                     atype = atype_raw  # 已经是枚举
 
-                pre_close = item.get("pre_close_price")
-                # 显式处理 None，防止 float(None) 报错
+                # 兼容不同收盘价字段名
+                close_price = (
+                    item.get("close_price")
+                    or item.get("close")
+                    or item.get("unit_nav")
+                )
+
+                # 兼容不同昨收字段名
+                pre_close = (
+                    item.get("pre_close_price")
+                    or item.get("pre_close")
+                    or item.get("prev_unit_nav")
+                )
                 pre_close_val = float(pre_close) if pre_close is not None else None
 
                 md = MarketData(
                     trade_date=item.get("trade_date"),
-                    asset_code=item.get("asset_code"),
+                    asset_code=asset_code,
                     asset_type=atype,
-                    close_price=float(item.get("close_price")),
+                    close_price=float(close_price) if close_price is not None else None,
                     pre_close_price=pre_close_val
                 )
                 market_data_list.append(md)

@@ -2,9 +2,6 @@
 .venv
 .idea
 
-# 忽略用于放过时文件的文件夹
-archive/
-
 # 忽略运行时数据
 data_runtime/
 
@@ -26,5 +23,12 @@ node_modules/
 package.json
 package-lock.json
 
-# 忽略项目内容记录文件
+# 忽略项目内容记录文件（包含敏感上下文和会话记忆）
 PROJECT CONTEXT AND ROADMAP.md
+docs/project_memory.md
+
+# 忽略归档和输出目录
+archive/
+output/
+dashboard/frontend/.next/
+backend.log

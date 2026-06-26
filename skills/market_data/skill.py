@@ -58,17 +58,24 @@ class GetMarketDataSkill(BaseSkill):
     def execute(self, context: SkillContext) -> SkillResult:
         """
         执行逻辑：
-        1. 从 context.extra_params 提取 symbol 和 asset_type。
+        1. 从 context.extra_params 提取 symbol/asset_codes 和 asset_type/asset_types。
         2. 使用 context.target_date 作为查询日期。
-        3. 调用 service.get_daily_data。
+        3. 调用 service.get_daily_data（支持单只或批量查询）。
         4. 返回标准化的 SkillResult。
         """
-        # 1. 提取参数
         params = context.extra_params or {}
+        
+        # 支持批量查询（用于 PortfolioSkill 等上游批量调用）
+        asset_codes = params.get("asset_codes")
+        asset_types = params.get("asset_types")
+        
+        if asset_codes and isinstance(asset_codes, list):
+            return self._execute_batch(context, asset_codes, asset_types or [])
+        
+        # 单只查询（用于 LLM 工具调用）
         symbol = params.get("symbol")
         asset_type_str = params.get("asset_type", "stock")
 
-        # 2. 基础校验
         if not symbol:
             return SkillResult(
                 data={},
@@ -81,33 +88,99 @@ class GetMarketDataSkill(BaseSkill):
                 summary_hint="请告诉我您想查询哪只股票的代码？"
             )
 
-        # 规范化股票代码 (可选：如果用户只输 6 位数字，这里可以加后缀逻辑，暂略)
-        # 假设 provider 能处理 '000001' 或 '000001.SZ'
-
-        # 转换资产类型枚举
         try:
             asset_type = AssetType(asset_type_str.lower())
         except ValueError:
             logger.warning(f"未知的资产类型 {asset_type_str}，默认使用 STOCK")
             asset_type = AssetType.STOCK
 
-        # 3. 调用 Service (核心逻辑)
-        # service 内部会处理：查缓存 -> 调 API -> 存缓存 -> 返回结果
         result = self.service.get_daily_data(
             context=context,
             symbol=symbol,
             asset_type=asset_type
         )
 
-        # 4. 后处理 (可选)
-        # 如果 service 返回成功，但数据中没有 pre_close (比如新股)，可以在这里补充提示
         if result.meta.status == "success" and result.data:
             if 'pre_close' not in result.data or result.data.get('pre_close') is None:
-                # 更新 hint，提示缺少昨收
                 current_hint = result.summary_hint or ""
                 result.summary_hint = f"{current_hint} (注：该日可能为上市首日，无昨收数据)"
 
         return result
+    
+    def _execute_batch(
+        self,
+        context: SkillContext,
+        asset_codes: list,
+        asset_types: list
+    ) -> SkillResult:
+        """
+        批量获取行情数据，供 PortfolioSkill 等上游调用。
+        
+        :param asset_codes: 资产代码列表
+        :param asset_types: 资产类型列表（与 asset_codes 一一对应，或只有一个默认值）
+        :return: SkillResult，data 字段为 List[dict]
+        """
+        results = []
+        failed_codes = []
+        
+        # 如果 asset_types 长度与 asset_codes 不一致，用最后一个或默认值填充
+        if len(asset_types) < len(asset_codes):
+            default_type = asset_types[-1] if asset_types else "stock"
+            asset_types = asset_types + [default_type] * (len(asset_codes) - len(asset_types))
+        
+        for code, atype in zip(asset_codes, asset_types):
+            try:
+                asset_type = AssetType(atype.lower())
+            except ValueError:
+                asset_type = AssetType.STOCK
+            
+            sub_context = SkillContext(
+                target_date=context.target_date,
+                extra_params={
+                    "symbol": code,
+                    "asset_type": atype
+                }
+            )
+            
+            result = self.service.get_daily_data(
+                context=sub_context,
+                symbol=code,
+                asset_type=asset_type
+            )
+            
+            if result.meta.status == "success" and result.data:
+                results.append(result.data)
+            else:
+                failed_codes.append(code)
+                logger.warning(f"[GetMarketDataSkill] 批量查询失败：{code} - {result.meta.message}")
+        
+        if not results:
+            return SkillResult(
+                data={},
+                meta=SkillMeta(
+                    source="api",
+                    status="failed",
+                    target_date=context.target_date,
+                    message=f"所有资产行情获取失败。失败列表：{failed_codes}"
+                ),
+                summary_hint="无法获取任何资产的行情数据。"
+            )
+        
+        status = "partial" if failed_codes else "success"
+        message = f"批量查询完成：成功 {len(results)} 只"
+        if failed_codes:
+            message += f"，失败 {len(failed_codes)} 只：{failed_codes}"
+        
+        return SkillResult(
+            data={"items": results},
+            meta=SkillMeta(
+                source="api",
+                status=status,
+                target_date=context.target_date,
+                message=message
+            ),
+            summary_hint=message
+        )
 
 
 # --- 导出单例实例 ---

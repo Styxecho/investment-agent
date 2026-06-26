@@ -129,17 +129,26 @@ class iFinDProvider:
 
         logger.info(f"[iFinD] 准备获取数据：{ths_code} ({start_dt} ~ {end_dt})")
 
-        # 2. 构造请求指标 (关键修改：确保包含 pre_close)
+        # 2. 构造请求指标 (关键修改：确保包含 pre_close 和 adjust_factor)
         close_indicator = asset_type.ifind_close_price_indicator
         pre_close_indicator = asset_type.ifind_pre_close_indicator
+        adjust_factor_indicator = asset_type.ifind_adjust_factor_indicator
 
+        indicators = [close_indicator]
         if pre_close_indicator:
-            request_indicator = f"{close_indicator},{pre_close_indicator}"
-        else:
-            request_indicator = close_indicator
+            indicators.append(pre_close_indicator)
+        if adjust_factor_indicator:
+            indicators.append(adjust_factor_indicator)
 
-        logger.info(f"[iFinD] 请求指标：{request_indicator}")
-        global_param = asset_type.ifind_global_param or '100'
+        request_indicator = ";".join(indicators)
+        
+        # 【关键修复】根据指标数量生成 jsonparam
+        indicator_count = len(indicators)
+        jsonparam = ';' * (indicator_count - 1)
+
+        logger.info(f"[iFinD] 请求指标：{request_indicator} ({indicator_count}个指标)")
+        logger.info(f"[iFinD] 参数：jsonparam='{jsonparam}'")
+        global_param = asset_type.ifind_global_param or ''
 
         # 3. 执行带重试的请求
         df = None
@@ -152,7 +161,7 @@ class iFinDProvider:
                 res = ifd.THS_DS(
                     thscode=ths_code,
                     jsonIndicator=request_indicator,
-                    jsonparam='100',
+                    jsonparam=jsonparam,
                     globalparam=global_param,
                     begintime=start_dt,
                     endtime=end_dt
@@ -209,6 +218,13 @@ class iFinDProvider:
                 column_mapping[pre_close_indicator] = asset_type.ifind_pre_close_column
             else:
                 logger.warning(f"[iFinD] 请求了昨收但未找到列：{pre_close_indicator}. 当前列：{raw_cols}")
+        
+        # 映射复权因子
+        if adjust_factor_indicator:
+            if adjust_factor_indicator in raw_cols:
+                column_mapping[adjust_factor_indicator] = 'adjust_factor'
+            else:
+                logger.warning(f"[iFinD] 请求了复权因子但未找到列：{adjust_factor_indicator}. 当前列：{raw_cols}")
 
         if column_mapping:
             df = df.rename(columns=column_mapping)
@@ -222,6 +238,8 @@ class iFinDProvider:
         required_cols = ['scrt_code', 'trade_date', 'close']
         if pre_close_indicator:
             required_cols.append('pre_close')
+        if adjust_factor_indicator:
+            required_cols.append('adjust_factor')
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             logger.error(f"[iFinD] 标准化后缺失关键列：{missing}")
@@ -429,6 +447,34 @@ class iFinDProvider:
         }])
         
         return result
+
+
+    def fetch_index_history(
+            self,
+            symbol: Union[str, List[str]],
+            start_date: str,
+            end_date: str,
+            retry_times: int = 3
+    ) -> pd.DataFrame:
+        """
+        获取指数历史行情数据 (包含收盘价和前收盘价)
+        
+        封装 iFinD 指数接口：
+        THS_DS('921128.SZ,931587.CSI','ths_pre_close_index;ths_close_price_index',';','block:history','2026-04-20','2026-04-23')
+        
+        :param symbol: 指数代码 (如 '000001.SH', '399001.SZ', '931587.CSI')，支持列表
+        :param start_date: 开始日期 (YYYYMMDD)
+        :param end_date: 结束日期 (YYYYMMDD)
+        :param retry_times: 失败重试次数
+        :return: 标准化后的 Pandas DataFrame (包含 'close', 'pre_close' 列)
+        """
+        return self.fetch_history(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            asset_type=AssetType.INDEX,
+            retry_times=retry_times
+        )
 
 
 # 导出全局单例
