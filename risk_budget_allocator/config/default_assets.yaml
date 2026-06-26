@@ -1,0 +1,40 @@
+assets:
+  - code: "000985.CSI"
+    name: "中证全指"
+    asset_class: "equity"
+    description: "A股整体市场表现"
+
+  - code: "CBA00351.CS"
+    name: "中债-总财富(7-10年)指数"
+    asset_class: "bond"
+    description: "国债与政策性金融债7-10年总财富指数，久期接近10年期国债，波动高于全期限总财富指数"
+
+  - code: "CBA00151.CS"
+    name: "中债-新综合财富(7-10年)指数"
+    asset_class: "bond"
+    description: "覆盖利率债与信用债的7-10年总财富指数（备选）"
+
+  - code: "CBA00601.CS"
+    name: "中债总财富指数"
+    asset_class: "bond"
+    description: "国债与政策性金融债总财富指数（历史备选）"
+
+  - code: "CBA00101.CS"
+    name: "中债新综合财富指数"
+    asset_class: "bond"
+    description: "覆盖利率债与信用债的总财富指数（历史备选）"
+
+  - code: "AU.SHF"
+    name: "上海黄金"
+    asset_class: "commodity"
+    description: "上期所黄金期货，代表国内可投商品"
+
+data:
+  source: "dataframe"
+  lookback_days: 252
+  price_field: "close_price"
+
+risk_model:
+  covariance_method: "ledoit_wolf"
+  ewma_halflife: 60
+  annualization: 252

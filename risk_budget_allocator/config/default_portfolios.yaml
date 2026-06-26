@@ -1,0 +1,73 @@
+# 默认组合配置
+# 支持三种 allocator：risk_budget / target_vol / manual
+
+portfolios:
+  conservative:
+    name: "保守组合"
+    description: "稳健为主，目标波动 3%，适合固收+思路"
+    allocator: "risk_budget"
+    risk_budget:
+      equity: 0.15
+      bond: 0.80
+      commodity: 0.05
+    target_volatility: 0.03
+    volatility_cap: 0.05
+    weight_constraints:
+      cash:
+        min: 0.00
+        max: null
+      equity:
+        min: 0.0
+        max: 0.30
+      bond:
+        min: 0.0
+        max: null
+      commodity:
+        min: 0.0
+        max: 0.08
+
+  balanced:
+    name: "均衡组合"
+    description: "股债均衡，目标波动 5%"
+    allocator: "risk_budget"
+    risk_budget:
+      equity: 0.40
+      bond: 0.50
+      commodity: 0.10
+    target_volatility: 0.05
+    volatility_cap: 0.08
+    weight_constraints:
+      cash:
+        min: 0.00
+        max: null
+      equity:
+        min: 0.0
+        max: 0.50
+      bond:
+        min: 0.0
+        max: null
+      commodity:
+        min: 0.0
+        max: 0.12
+
+  aggressive:
+    name: "激进组合"
+    description: "追求收益，股票内部再做行业/风格配置"
+    allocator: "manual"
+    fixed_weights:
+      equity: 0.70
+      bond: 0.20
+      commodity: 0.10
+    weight_constraints:
+      cash:
+        min: 0.00
+        max: null
+      equity:
+        min: 0.0
+        max: 0.90
+      bond:
+        min: 0.0
+        max: null
+      commodity:
+        min: 0.0
+        max: null
