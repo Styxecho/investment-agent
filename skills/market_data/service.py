@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 
 from utils.logger import logger
 from data_external.db.repositories import MarketDataRepository, FundRepository
-from .provider.ifind_provider import ifind_provider
 from config.enums import AssetType
 from utils.trade_calendar import TradeCalendarService
 
@@ -17,19 +16,128 @@ from skills.base import SkillContext, SkillResult, SkillMeta
 class MarketDataService:
     """
     市场数据服务层。
-    负责协调 缓存(DB) 和 数据源(iFinD)，并遵循标准输入输出契约。
+    负责协调 缓存(DB) 和 数据源(Tushare / iFinD / AkShare)，并遵循标准输入输出契约。
     """
 
     def __init__(self):
         self.repo = MarketDataRepository()
         self.fund_repo = FundRepository()  # 基金数据仓储
         self.trade_calendar = TradeCalendarService()  # 交易日历服务
-        self.provider = ifind_provider  # 引用全局单例 Provider
-        # 注意：这里不再主动 connect()，改为懒加载
 
-    def _ensure_connected(self) -> bool:
-        """确保 iFinD 已连接"""
-        return self.provider.connect()
+        # 根据配置选择主 provider 和降级 provider
+        from config.settings import settings
+        from .provider import tushare_provider, ifind_provider
+
+        provider_name = getattr(settings, 'MARKET_DATA_PROVIDER', 'tushare').lower()
+        if provider_name == 'tushare':
+            self.primary_provider = tushare_provider
+            self.fallback_provider = ifind_provider
+        elif provider_name == 'ifind':
+            self.primary_provider = ifind_provider
+            self.fallback_provider = None
+        else:
+            logger.warning(f"[Service] 未知的 MARKET_DATA_PROVIDER: {provider_name}，默认使用 Tushare")
+            self.primary_provider = tushare_provider
+            self.fallback_provider = ifind_provider
+
+        self._primary_name = provider_name
+        self._fallback_name = 'ifind' if self.fallback_provider else 'none'
+
+    def _ensure_primary_connected(self) -> bool:
+        """确保主 provider 可用（Tushare 不需要登录，iFinD 需要）"""
+        if hasattr(self.primary_provider, 'connect'):
+            return self.primary_provider.connect()
+        return True
+
+    def _ensure_fallback_connected(self) -> bool:
+        """确保降级 provider 可用"""
+        if self.fallback_provider is None:
+            return False
+        if hasattr(self.fallback_provider, 'connect'):
+            return self.fallback_provider.connect()
+        return True
+
+    def _fetch_with_fallback(self, fetch_func, *args, **kwargs):
+        """
+        使用主 provider 获取数据，失败时降级到 fallback provider。
+        """
+        df = None
+        try:
+            if self._ensure_primary_connected():
+                df = fetch_func(self.primary_provider, *args, **kwargs)
+                if df is not None and not df.empty:
+                    return df, self._primary_name
+                else:
+                    logger.warning(f"[Service] {self._primary_name} 返回空数据")
+            else:
+                logger.warning(f"[Service] {self._primary_name} 连接失败")
+        except Exception as e:
+            logger.warning(f"[Service] {self._primary_name} 调用失败：{e}")
+
+        if self.fallback_provider is not None:
+            logger.info(f"[Service] 降级使用 {self._fallback_name}")
+            try:
+                if self._ensure_fallback_connected():
+                    df = fetch_func(self.fallback_provider, *args, **kwargs)
+                    if df is not None and not df.empty:
+                        return df, self._fallback_name
+                    else:
+                        logger.warning(f"[Service] {self._fallback_name} 返回空数据")
+                else:
+                    logger.warning(f"[Service] {self._fallback_name} 连接失败")
+            except Exception as e:
+                logger.error(f"[Service] {self._fallback_name} 调用失败：{e}")
+
+        return df, 'none'
+
+    def _is_cache_complete(
+        self,
+        df_cached: pd.DataFrame,
+        start_date: str,
+        end_date: str
+    ) -> bool:
+        """
+        检查缓存数据是否完整覆盖指定日期范围内的所有交易日。
+        
+        核心逻辑：
+        1. 根据交易日历，计算目标范围内应有多少个交易日
+        2. 检查缓存 DataFrame 是否包含所有这些交易日的数据
+        3. 若有任一交易日缺失，视为不完整
+        
+        :param df_cached: 缓存的 DataFrame，必须包含 'trade_date' 列
+        :param start_date: 开始日期 (YYYYMMDD)
+        :param end_date: 结束日期 (YYYYMMDD)
+        :return: True=完整覆盖，False=不完整（需从 iFinD 重新获取）
+        """
+        if df_cached is None or df_cached.empty:
+            return False
+        
+        if 'trade_date' not in df_cached.columns:
+            logger.warning("[Service] 缓存数据缺少 trade_date 列，视为不完整")
+            return False
+        
+        # 获取日期范围内的所有交易日
+        trading_days = self.trade_calendar.get_trading_date_range(start_date, end_date)
+        if not trading_days:
+            # 如果没有交易日（比如都是节假日），只要有数据就算完整
+            return True
+        
+        # 提取缓存中的日期集合
+        cached_dates = set(df_cached['trade_date'].astype(str).str.replace('-', '').unique())
+        expected_dates = set(trading_days)
+        
+        # 检查是否缺失任何交易日
+        missing_dates = expected_dates - cached_dates
+        if missing_dates:
+            logger.warning(
+                f"[Service] 缓存数据不完整：期望 {len(expected_dates)} 个交易日，"
+                f"实际有 {len(cached_dates)} 个，缺失 {len(missing_dates)} 个: "
+                f"{sorted(list(missing_dates))}"
+            )
+            return False
+        
+        logger.debug(f"[Service] 缓存数据完整性检查通过：{len(expected_dates)} 个交易日")
+        return True
 
     def get_daily_data(
             self,
@@ -55,18 +163,19 @@ class MarketDataService:
         """
         target_date = context.target_date  # 格式：YYYYMMDD
         
-        # 根据资产类型分发到不同的处理方法
+            # 根据资产类型分发到不同的处理方法
         if asset_type == AssetType.FUND:
             return self._get_fund_daily_data(context, symbol, target_date)
         else:
             # 股票/ETF 使用现有逻辑
-            return self._get_stock_daily_data(context, symbol, target_date)
+            return self._get_stock_daily_data(context, symbol, target_date, asset_type)
     
     def _get_stock_daily_data(
             self,
             context: SkillContext,
             symbol: str,
-            target_date: str
+            target_date: str,
+            asset_type: AssetType = AssetType.STOCK
     ) -> SkillResult:
         """
         获取股票/ETF 的日终行情数据（原有逻辑）
@@ -86,62 +195,35 @@ class MarketDataService:
             # 假设 repo 接口是 get_daily_data(symbol, start, end)
             logger.info(f"[Service] 正在查询缓存：{symbol} @ {target_date}")
             
-            # 使用交易日历获取 T-1 日，以便查询范围包含 pre_close 所需数据
-            prev_trading_date = self.trade_calendar.get_previous_trading_date(target_date, days_back=1)
-            if prev_trading_date:
-                query_start = prev_trading_date
-            else:
-                # 降级：往前推 3 天
-                target_dt = datetime.strptime(target_date, "%Y%m%d")
-                query_start = (target_dt - timedelta(days=3)).strftime("%Y%m%d")
+            # 使用单日范围查询缓存，因为 API 返回的 pre_close 字段已经包含昨收信息
+            query_start = target_date
+            query_end = target_date
             
-            df_cached = self.repo.get_daily_data(symbol, query_start, target_date)
+            df_cached = self.repo.get_daily_data(symbol, query_start, query_end)
 
             if df_cached is not None and not df_cached.empty:
                 # 检查关键字段是否存在 (close, pre_close)
                 if 'close' in df_cached.columns and 'pre_close' in df_cached.columns:
-                    logger.info(f"[Service] ✅ 缓存命中 (Source: DB)")
-                    df_result = df_cached
-                    meta_source = "cache"
-                    meta_status = "success"
-                    meta_message = f"数据来自本地缓存 ({target_date})"
+                    # 检查缓存是否完整覆盖查询范围 [query_start, query_end]
+                    if self._is_cache_complete(df_cached, query_start, query_end):
+                        logger.info(f"[Service] ✅ 缓存命中 (Source: DB)")
+                        df_result = df_cached
+                        meta_source = "cache"
+                        meta_status = "success"
+                        meta_message = f"数据来自本地缓存 ({target_date})"
+                    else:
+                        logger.warning(f"[Service] ⚠️ 缓存数据不完整（日期覆盖不全），重新获取。")
+                        df_cached = None  # 强制走刷新逻辑
                 else:
                     logger.warning(f"[Service] ⚠️ 缓存数据不完整 (缺失 close/pre_close)，重新获取。")
                     df_cached = None  # 强制走刷新逻辑
 
-            # 2. 缓存未命中或数据不完整，调用 Provider
+            # 2. 缓存未命中或数据不完整，调用 Provider（主数据源 + 降级）
             if df_result is None:
                 logger.info(f"[Service] 缓存未命中，请求数据：{symbol} @ {target_date}")
 
-                # 尝试 iFinD，失败则降级到 AkShare
-                df_new = None
-                use_akshare = False
-                
-                try:
-                    if self._ensure_connected():
-                        df_new = self.provider.fetch_history(
-                            symbol=symbol,
-                            start_date=target_date,
-                            end_date=target_date,
-                            asset_type=asset_type
-                        )
-                    else:
-                        logger.warning("[Service] iFinD 连接失败，降级使用 AkShare")
-                        use_akshare = True
-                except Exception as e:
-                    logger.warning(f"[Service] iFinD 调用失败：{e}，降级使用 AkShare")
-                    use_akshare = True
-                
-                # 降级到 AkShare
-                if use_akshare:
-                    from .provider.akshare_provider import AkShareProvider
-                    akshare = AkShareProvider()
-                    logger.info(f"[Service] 使用 AkShare 获取数据：{symbol}")
-                    df_new = akshare.fetch_history(symbol, target_date, target_date)
-
-                # 调用 Provider (已包含重试逻辑)
-                # 请求范围：只请求当天即可，因为 API 返回的 pre_close 字段已经包含了昨收信息
-                df_new = self.provider.fetch_history(
+                df_new, source = self._fetch_with_fallback(
+                    lambda provider, **kw: provider.fetch_history(**kw),
                     symbol=symbol,
                     start_date=target_date,
                     end_date=target_date,
@@ -149,9 +231,8 @@ class MarketDataService:
                 )
 
                 if df_new is None or df_new.empty:
-                    meta_message = f"iFinD 返回空数据 ({target_date})"
+                    meta_message = f"所有数据源返回空数据 ({target_date})"
                     logger.warning(f"[Service] {meta_message}")
-                    # 返回空结果的失败状态
                     return SkillResult(
                         data={},
                         meta=SkillMeta(
@@ -163,14 +244,13 @@ class MarketDataService:
                     )
 
                 # 3. 保存到数据库
-                logger.info(f"[Service] 💾 正在保存新数据到本地...")
-                # 假设 repo.save_daily_data 能处理 DataFrame
+                logger.info(f"[Service] 💾 正在保存新数据到本地 (source: {source})...")
                 self.repo.save_daily_data(df_new, symbol)
 
                 df_result = df_new
-                meta_source = "api"
+                meta_source = source
                 meta_status = "success"
-                meta_message = f"数据来自 iFinD API ({target_date})"
+                meta_message = f"数据来自 {source} ({target_date})"
 
             # 4. 构建最终结果
             # 提取目标日期的那一行数据转为字典，方便 LLM 阅读
@@ -292,26 +372,31 @@ class MarketDataService:
             df_cached = self.fund_repo.get_fund_nav(fund_code, query_start, query_end)
             
             if df_cached is not None and not df_cached.empty:
-                # 缓存命中
-                df_result = df_cached
-                meta_source = "cache"
-                meta_status = "success"
-                meta_message = f"数据来自本地缓存 ({query_start} ~ {query_end})"
-                logger.info(f"[Service] ✅ 缓存命中 (Source: DB)")
+                # 新增：检查缓存是否完整覆盖查询范围 [query_start, query_end]
+                if self._is_cache_complete(df_cached, query_start, query_end):
+                    df_result = df_cached
+                    meta_source = "cache"
+                    meta_status = "success"
+                    meta_message = f"数据来自本地缓存 ({query_start} ~ {query_end})"
+                    logger.info(f"[Service] ✅ 缓存命中 (Source: DB)")
+                else:
+                    logger.warning(f"[Service] ⚠️ 缓存数据不完整（日期覆盖不全），重新获取。")
+                    df_cached = None
+                    df_result = None
             
-            # 4. 缓存未命中，调用 iFinD
+            # 4. 缓存未命中，调用 Provider（主数据源 + 降级）
             if df_result is None:
-                logger.info(f"[Service] 缓存未命中，请求 iFinD: {fund_code} @ [{query_start}, {query_end}]")
-                
-                # 调用 Provider 获取基金净值
-                df_new = self.provider.fetch_fund_nav(
+                logger.info(f"[Service] 缓存未命中，请求数据: {fund_code} @ [{query_start}, {query_end}]")
+
+                df_new, source = self._fetch_with_fallback(
+                    lambda provider, **kw: provider.fetch_fund_nav(**kw),
                     fund_code=fund_code,
                     start_date=query_start,
                     end_date=query_end
                 )
                 
                 if df_new is None or df_new.empty:
-                    meta_message = f"iFinD 返回空数据 ({query_start} ~ {query_end})"
+                    meta_message = f"所有数据源返回空数据 ({query_start} ~ {query_end})"
                     logger.warning(f"[Service] {meta_message}")
                     return SkillResult(
                         data={},
@@ -322,15 +407,15 @@ class MarketDataService:
                             message=meta_message
                         )
                     )
-                
+
                 # 5. 保存到数据库
-                logger.info(f"[Service] 💾 正在保存新数据到本地...")
+                logger.info(f"[Service] 💾 正在保存新数据到本地 (source: {source})...")
                 self.fund_repo.save_fund_nav(df_new, fund_code)
-                
+
                 df_result = df_new
-                meta_source = "api"
+                meta_source = source
                 meta_status = "success"
-                meta_message = f"数据来自 iFinD API ({query_start} ~ {query_end})"
+                meta_message = f"数据来自 {source} ({query_start} ~ {query_end})"
             
             # 6. 构建最终结果
             # 如果是日期范围查询，返回所有数据

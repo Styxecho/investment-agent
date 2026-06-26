@@ -42,7 +42,13 @@ class Settings:
         self.IFIND_PIN = os.getenv("IFIND_PIN")
         # 增加一个检查，如果没配置则报错或警告
         if not self.IFIND_USERNAME or not self.IFIND_PIN:
-            print("⚠️  警告：未在 .env 中找到 IFIND_USERNAME 或 IFIND_PIN，部分功能可能无法使用。")
+            print("⚠️  警告：未在 .env 中找到 IFIND_USERNAME 或 IFIND_PIN，iFinD 数据源将不可用。")
+
+        # Tushare 数据接口配置
+        self.TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN")
+        self.MARKET_DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "tushare").lower()
+        if not self.TUSHARE_TOKEN and self.MARKET_DATA_PROVIDER == "tushare":
+            print("⚠️  警告：未在 .env 中找到 TUSHARE_TOKEN，Tushare 数据源将不可用。")
 
         # --- LLM 配置 ---
         # Ollama（本地）

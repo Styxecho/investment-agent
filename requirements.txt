@@ -11,12 +11,16 @@ dashscope>=1.19.0  # Qwen API (DashScope 原生 SDK)
 pandas>=2.0.0
 numpy>=1.24.0
 pydantic>=2.0.0
+scipy>=1.10.0
+cvxpy>=1.3.0
+scikit-learn>=1.2.0
 
 # Database
 sqlalchemy>=2.0.0
 
 # Data Sources
 akshare>=1.12.0
+tushare>=1.4.0
 # iFinDPy  # 同花顺数据接口（可选，需要单独安装）
 
 # Utilities
