@@ -116,10 +116,10 @@ class IndustryRotationDataManager:
     # ==================== 数据读取 ====================
     
     def load_sw_index_daily(self) -> pd.DataFrame:
-        """读取申万行业指数日频数据"""
+        """读取申万行业指数日频数据（含开高低收成交量成交额）"""
         conn = sqlite3.connect(self.db_path)
         df = pd.read_sql("""
-            SELECT index_code, trade_date, close_price 
+            SELECT index_code, trade_date, pre_close_price, open_price, high_price, low_price, close_price, volume, amount
             FROM index_daily 
             WHERE index_code LIKE '801%.SI'
             ORDER BY index_code, trade_date
@@ -127,14 +127,16 @@ class IndustryRotationDataManager:
         conn.close()
         
         df['trade_date'] = pd.to_datetime(df['trade_date'], format='%Y%m%d')
-        df['close_price'] = pd.to_numeric(df['close_price'], errors='coerce')
-        return df.dropna()
+        numeric_cols = ['pre_close_price', 'open_price', 'high_price', 'low_price', 'close_price', 'volume', 'amount']
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df.dropna(subset=['close_price'])
     
     def load_benchmark_daily(self) -> pd.DataFrame:
-        """读取中证全指日频数据"""
+        """读取中证全指日频数据（含开高低收成交量成交额）"""
         conn = sqlite3.connect(self.db_path)
         df = pd.read_sql("""
-            SELECT index_code, trade_date, close_price 
+            SELECT index_code, trade_date, pre_close_price, open_price, high_price, low_price, close_price, volume, amount
             FROM index_daily 
             WHERE index_code = '000985.CSI'
             ORDER BY trade_date
@@ -142,8 +144,10 @@ class IndustryRotationDataManager:
         conn.close()
         
         df['trade_date'] = pd.to_datetime(df['trade_date'], format='%Y%m%d')
-        df['close_price'] = pd.to_numeric(df['close_price'], errors='coerce')
-        return df.dropna()
+        numeric_cols = ['pre_close_price', 'open_price', 'high_price', 'low_price', 'close_price', 'volume', 'amount']
+        for col in numeric_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df.dropna(subset=['close_price'])
     
     def load_etf_universe(self) -> pd.DataFrame:
         """读取ETF列表"""

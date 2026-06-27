@@ -1,0 +1,53 @@
+# Phase 2.5 行业轮动卫星策略回测配置
+
+# 回测区间
+start_date: "20150101"
+end_date: "20260624"
+
+# 大类资产配置（相对权重，自动归一化）
+# Phase 2.5 只管理 equity 部分内的卫星仓位
+asset_allocation:
+  equity: 50.0
+  bond: 40.0
+  commodity: 10.0
+
+# 卫星仓位占 equity 的比例
+satellite_ratio_in_equity: 0.10
+
+# 交易成本（双边，即买入+卖出合计）
+transaction_cost: 0.001
+
+# 初始净值
+initial_nav: 1.0
+
+# 是否使用 ETF 映射（False=用行业指数回测，True=映射到 ETF）
+use_etf_mapping: false
+
+# 输出目录
+output_dir: "output/industry_rotation_backtest"
+
+# 微观引擎参数
+micro:
+  ma_short: 20
+  ma_mid: 60
+  ma_long: 120
+  pull_back_tol: 0.03        # 强势回调容差：收盘价距MA20 ±3%
+  deep_pull_back_tol: 0.03   # 深度回调容差：收盘价距MA60 ±3%
+  deep_pull_back_max_5d_drop: 0.05  # 深度回调要求过去5日跌幅 < 5%
+  max_5d_drop: 0.08          # 入场前过去5日累计跌幅上限
+  breakout_window: 5         # 突破买入窗口（交易日）
+  max_positions: 5           # 最多持仓行业数
+  single_cap: 0.40           # 单行业仓位上限（占卫星资金比例）
+  etf_mapping_path: "docs/research/industry_rotation/industry_etf_mapping.csv"
+
+# 风险监控参数
+risk:
+  daily_drop_limit: 0.07              # 单日跌幅 > 7% 平仓
+  consecutive_drop_days: 3            # 连续N日下跌
+  consecutive_drop_daily: 0.02        # 每日跌幅阈值
+  consecutive_drop_cumulative: 0.08   # 累计跌幅阈值
+  crowding_window_short: 5            # 拥挤度短期窗口
+  crowding_window_long: 60            # 拥挤度长期窗口
+  crowding_threshold: 1.5             # 拥挤度阈值
+  crowding_consecutive_weeks: 4       # 连续N周拥挤直接平仓
+  crowding_reduce_ratio: 0.5          # 拥挤触发减仓比例
